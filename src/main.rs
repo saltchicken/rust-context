@@ -1,13 +1,14 @@
-use clap::{Parser, ValueEnum}; // ‼️ Added ValueEnum
+use clap::{ArgGroup, Parser}; // ‼️ ArgGroup added
 use git2::Repository;
 use glob::Pattern;
-use serde::Serialize;
-use std::collections::{BTreeMap, HashSet}; // ‼️ Added BTreeMap for a sorted JSON
+use serde::Serialize; // ‼️ Added this
+use std::collections::{BTreeMap, HashSet}; // ‼️ BTreeMap added
+use std::fs; // ‼️ Added for file reading
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
-use walkdir::{DirEntry, WalkDir}; // ‼️ Added this
+use walkdir::{DirEntry, WalkDir};
 
-// ‼️ Added a struct for JSON serialization
+// ‼️ Struct for JSON serialization
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FsNode {
@@ -18,17 +19,14 @@ struct FsNode {
     children: Vec<FsNode>,
 }
 
-// ‼️ Added an enum for the format option
-#[derive(Debug, Clone, ValueEnum)]
-enum Format {
-    /// Human-readable tree (default)
-    Tree,
-    /// Machine-readable JSON
-    Json,
-}
-
+// ‼️ Cli struct is significantly updated
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(version, about, long_about = None, group(
+    // ‼️ Added a mutually exclusive group for output modes
+    clap::ArgGroup::new("output_mode")
+        .required(false)
+        .args(&["tree", "json"]),
+))]
 struct Cli {
     /// Glob patterns to include (e.g., "*.rs" "src/**")
     #[arg(long, short = 'i', num_args(1..))]
@@ -38,10 +36,14 @@ struct Cli {
     #[arg(long, short = 'e', num_args(1..))]
     exclude: Vec<String>,
 
-    // ‼️ Added the format argument
-    /// Output format
-    #[arg(long, value_enum, default_value_t = Format::Tree)]
-    format: Format,
+    // ‼️ Replaced `format` with two boolean flags
+    /// Display the file list as a human-readable tree
+    #[arg(long)]
+    tree: bool,
+
+    /// Display the file list as a machine-readable JSON tree
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Error)]
@@ -54,12 +56,15 @@ enum GitRootError {
     WalkDir(#[from] walkdir::Error),
     #[error("Invalid glob pattern: {0}")]
     InvalidGlob(#[from] glob::PatternError),
-    // ‼️ Added error for JSON serialization
     #[error("Failed to serialize JSON: {0}")]
     Json(#[from] serde_json::Error),
-}
 
-// ... find_git_root() and is_git_dir() are unchanged ...
+    // ‼️ Added new error variants for file reading
+    #[error("Failed to read file {0}: {1}")]
+    FileRead(PathBuf, #[source] std::io::Error),
+    #[error("File content for {0} is not valid UTF-8")]
+    InvalidUtf8(PathBuf),
+}
 
 fn find_git_root() -> Result<PathBuf, GitRootError> {
     let repo = Repository::discover(".")?;
@@ -71,7 +76,6 @@ fn is_git_dir(entry: &DirEntry) -> bool {
     entry.file_name().to_str().map_or(false, |s| s == ".git")
 }
 
-// ... list_non_ignored_files() is unchanged ...
 fn list_non_ignored_files(
     repo_root: &Path,
     includes: &[String],
@@ -135,9 +139,42 @@ fn list_non_ignored_files(
     Ok(non_ignored_files)
 }
 
-// ‼️ Replace the entire old build_fs_tree function with this one
+// ‼️ New function for the default behavior: wrapping file contents in XML
+fn get_file_contents(
+    files: &[PathBuf], // Expecting absolute paths from list_non_ignored_files
+    root: &Path,
+) -> Result<String, GitRootError> {
+    let mut final_output = String::new();
+
+    for abs_path in files {
+        let relative_path = match abs_path.strip_prefix(root) {
+            Ok(p) => p,
+            Err(_) => continue, // Should be unreachable
+        };
+
+        // Create a clean, forward-slash path for the tag
+        let relative_path_str = relative_path.to_string_lossy().replace('\\', "/");
+
+        // Read as bytes first to validate UTF-8
+        let content_bytes =
+            fs::read(abs_path).map_err(|e| GitRootError::FileRead(abs_path.to_path_buf(), e))?;
+
+        let content_str = String::from_utf8(content_bytes)
+            .map_err(|_| GitRootError::InvalidUtf8(abs_path.to_path_buf()))?;
+
+        // Append the wrapped content
+        final_output.push_str(&format!(
+            "<file src=\"{}\">\n{}</file>\n",
+            relative_path_str, content_str
+        ));
+    }
+
+    Ok(final_output)
+}
+
+// ‼️ Function to build the JSON-friendly tree
 fn build_fs_tree(relative_files: &[PathBuf]) -> Vec<FsNode> {
-    // ‼️ Helper function to recursively build the tree
+    // Helper function to recursively build the tree
     fn insert_path(current_level: &mut BTreeMap<String, FsNode>, path_components: &[Component]) {
         if path_components.is_empty() {
             return;
@@ -150,7 +187,7 @@ fn build_fs_tree(relative_files: &[PathBuf]) -> Vec<FsNode> {
         let is_file = remaining_components.is_empty();
         let node_type = if is_file { "file" } else { "directory" };
 
-        // ‼️ Find or create the node for the current path component
+        // Find or create the node for the current path component
         let node = current_level.entry(name.clone()).or_insert_with(|| FsNode {
             name,
             node_type: node_type.to_string(),
@@ -158,7 +195,7 @@ fn build_fs_tree(relative_files: &[PathBuf]) -> Vec<FsNode> {
         });
 
         if !is_file {
-            // ‼️ This is a directory; we need to recurse into its children.
+            // This is a directory; we need to recurse into its children.
             // We convert the Vec<FsNode> to a BTreeMap to efficiently find/insert
             // the next component.
             let mut children_map: BTreeMap<String, FsNode> = node
@@ -167,10 +204,10 @@ fn build_fs_tree(relative_files: &[PathBuf]) -> Vec<FsNode> {
                 .map(|n| (n.name.clone(), n))
                 .collect();
 
-            // ‼️ Recurse with the rest of the path
+            // Recurse with the rest of the path
             insert_path(&mut children_map, remaining_components);
 
-            // ‼️ Convert the BTreeMap back into a sorted Vec
+            // Convert the BTreeMap back into a sorted Vec
             node.children = children_map.into_values().collect();
         }
     }
@@ -181,10 +218,11 @@ fn build_fs_tree(relative_files: &[PathBuf]) -> Vec<FsNode> {
         insert_path(&mut root, &components);
     }
 
-    // ‼️ Convert the root map to a sorted Vec for the final JSON array
+    // Convert the root map to a sorted Vec for the final JSON array
     root.into_values().collect()
 }
-// ‼️ Renamed the old printing logic
+
+// ‼️ Function for printing the human-readable tree
 fn print_tree_style(relative_files: &[PathBuf]) {
     let mut printed_dirs = HashSet::new();
     for path in relative_files {
@@ -205,8 +243,10 @@ fn print_tree_style(relative_files: &[PathBuf]) {
     }
 }
 
+// ‼️ main() function is heavily updated to branch logic
 fn main() {
     let cli = Cli::parse();
+
     let root = match find_git_root() {
         Ok(path) => path,
         Err(err) => {
@@ -215,6 +255,7 @@ fn main() {
         }
     };
 
+    // This is the master list of absolute file paths
     let files = match list_non_ignored_files(&root, &cli.include, &cli.exclude) {
         Ok(files) => files,
         Err(err) => {
@@ -223,27 +264,39 @@ fn main() {
         }
     };
 
-    // ‼️ Get relative paths and sort them
-    let mut relative_files: Vec<PathBuf> = files
-        .iter()
-        .filter_map(|abs_path| abs_path.strip_prefix(&root).ok())
-        .map(|rel_path| rel_path.to_path_buf())
-        .collect();
-    relative_files.sort();
+    // ‼️ --- Main Logic Branch ---
 
-    // ‼️ Branch on the format
-    match cli.format {
-        Format::Tree => {
-            println!("Git root found at: {}", root.display());
-            println!("\nFound {} matching files:", relative_files.len());
-            print_tree_style(&relative_files);
+    if cli.tree {
+        // ‼️ --tree mode: Get relative paths, sort, and print tree
+        let mut relative_files: Vec<PathBuf> = files
+            .iter()
+            .filter_map(|abs_path| abs_path.strip_prefix(&root).ok())
+            .map(|rel_path| rel_path.to_path_buf())
+            .collect();
+        relative_files.sort();
+
+        println!("Git root found at: {}", root.display());
+        println!("\nFound {} matching files:", relative_files.len());
+        print_tree_style(&relative_files);
+    } else if cli.json {
+        // ‼️ --json mode: Get relative paths, sort, and print JSON
+        let mut relative_files: Vec<PathBuf> = files
+            .iter()
+            .filter_map(|abs_path| abs_path.strip_prefix(&root).ok())
+            .map(|rel_path| rel_path.to_path_buf())
+            .collect();
+        relative_files.sort();
+
+        let tree = build_fs_tree(&relative_files);
+        match serde_json::to_string_pretty(&tree) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("Error serializing JSON: {}", e),
         }
-        Format::Json => {
-            let tree = build_fs_tree(&relative_files);
-            match serde_json::to_string_pretty(&tree) {
-                Ok(json) => println!("{}", json),
-                Err(e) => eprintln!("Error serializing JSON: {}", e),
-            }
+    } else {
+        // ‼️ Default mode: Get file contents
+        match get_file_contents(&files, &root) {
+            Ok(output) => print!("{}", output), // ‼️ print! not println!
+            Err(e) => eprintln!("Error processing file contents: {}", e),
         }
     }
 }
