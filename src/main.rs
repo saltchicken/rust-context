@@ -36,6 +36,11 @@ struct Cli {
     #[arg(long, short = 'e', num_args(1..))]
     exclude: Vec<String>,
 
+    // ‼️ Added new argument
+    /// Glob patterns to include in tree/json output only
+    #[arg(long, num_args(1..))]
+    include_in_tree: Vec<String>,
+
     // ‼️ Replaced `format` with two boolean flags
     /// Display the file list as a human-readable tree
     #[arg(long)]
@@ -255,8 +260,11 @@ fn main() {
         }
     };
 
-    // This is the master list of absolute file paths
-    let files = match list_non_ignored_files(&root, &cli.include, &cli.exclude) {
+    // ‼️ Combine all include patterns for the file discovery
+    let all_include_patterns = [cli.include.as_slice(), cli.include_in_tree.as_slice()].concat();
+
+    // ‼️ Get ONE list of all files matching any criteria
+    let all_files = match list_non_ignored_files(&root, &all_include_patterns, &cli.exclude) {
         Ok(files) => files,
         Err(err) => {
             eprintln!("Error listing files: {}", err);
@@ -267,8 +275,8 @@ fn main() {
     // ‼️ --- Main Logic Branch ---
 
     if cli.tree {
-        // ‼️ --tree mode: Get relative paths, sort, and print tree
-        let mut relative_files: Vec<PathBuf> = files
+        // ‼️ --tree mode: Uses all_files
+        let mut relative_files: Vec<PathBuf> = all_files // ‼️ Changed from 'files'
             .iter()
             .filter_map(|abs_path| abs_path.strip_prefix(&root).ok())
             .map(|rel_path| rel_path.to_path_buf())
@@ -279,8 +287,8 @@ fn main() {
         println!("\nFound {} matching files:", relative_files.len());
         print_tree_style(&relative_files);
     } else if cli.json {
-        // ‼️ --json mode: Get relative paths, sort, and print JSON
-        let mut relative_files: Vec<PathBuf> = files
+        // ‼️ --json mode: Uses all_files
+        let mut relative_files: Vec<PathBuf> = all_files // ‼️ Changed from 'files'
             .iter()
             .filter_map(|abs_path| abs_path.strip_prefix(&root).ok())
             .map(|rel_path| rel_path.to_path_buf())
@@ -293,10 +301,65 @@ fn main() {
             Err(e) => eprintln!("Error serializing JSON: {}", e),
         }
     } else {
-        // ‼️ Default mode: Get file contents
-        match get_file_contents(&files, &root) {
-            Ok(output) => print!("{}", output), // ‼️ print! not println!
-            Err(e) => eprintln!("Error processing file contents: {}", e),
+        // ‼️ Default mode: Filter all_files to get content_files
+        let content_files_result: Result<Vec<PathBuf>, GitRootError> = (|| {
+            if cli.include.is_empty() {
+                // No --include.
+                if cli.include_in_tree.is_empty() {
+                    // ‼️ Both flags empty. Default: include all files.
+                    Ok(all_files)
+                } else {
+                    // ‼️ Only --include-in-tree was given. Default: include no files.
+                    Ok(Vec::new())
+                }
+            } else {
+                // ‼️ --include has patterns. We must filter all_files:
+                // ‼️ Keep files that match --include AND DO NOT match --include-in-tree.
+                let include_patterns: Result<Vec<Pattern>, _> =
+                    cli.include.iter().map(|s| Pattern::new(s)).collect();
+                let include_patterns = include_patterns.map_err(GitRootError::InvalidGlob)?;
+
+                // ‼️ Compile --include-in-tree patterns to check for superseding
+                let tree_only_patterns: Result<Vec<Pattern>, _> = cli
+                    .include_in_tree
+                    .iter()
+                    .map(|s| Pattern::new(s))
+                    .collect();
+                let tree_only_patterns = tree_only_patterns.map_err(GitRootError::InvalidGlob)?;
+
+                let filtered = all_files
+                    .into_iter()
+                    .filter(|abs_path| {
+                        if let Ok(rel_path) = abs_path.strip_prefix(&root) {
+                            let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+
+                            // ‼️ Must match --include
+                            let matches_include =
+                                include_patterns.iter().any(|p| p.matches(&rel_str));
+                            // ‼️ Must NOT match --include-in-tree (which supersedes it)
+                            let matches_tree_only =
+                                tree_only_patterns.iter().any(|p| p.matches(&rel_str));
+
+                            matches_include && !matches_tree_only
+                        } else {
+                            false
+                        }
+                    })
+                    .collect();
+                Ok(filtered)
+            }
+        })();
+
+        match content_files_result {
+            Ok(content_files) => {
+                match get_file_contents(&content_files, &root) {
+                    Ok(output) => print!("{}", output), // ‼️ print! not println!
+                    Err(e) => eprintln!("Error processing file contents: {}", e),
+                }
+            }
+            Err(e) => {
+                eprintln!("Error filtering content files: {}", e);
+            }
         }
     }
 }
