@@ -274,34 +274,40 @@ fn main() {
 
     // ‼️ --- Main Logic Branch ---
 
-    if cli.tree {
-        // ‼️ --tree mode: Uses all_files
-        let mut relative_files: Vec<PathBuf> = all_files // ‼️ Changed from 'files'
-            .iter()
-            .filter_map(|abs_path| abs_path.strip_prefix(&root).ok())
-            .map(|rel_path| rel_path.to_path_buf())
-            .collect();
-        relative_files.sort();
+    // ‼️ NEW: Create relative_files list ONCE, as all modes can use it.
+    let mut relative_files: Vec<PathBuf> = all_files
+        .iter()
+        .filter_map(|abs_path| abs_path.strip_prefix(&root).ok())
+        .map(|rel_path| rel_path.to_path_buf())
+        .collect();
+    relative_files.sort();
 
+    if cli.tree {
+        // ‼️ --tree mode: Just print the human-readable tree
         println!("Git root found at: {}", root.display());
         println!("\nFound {} matching files:", relative_files.len());
         print_tree_style(&relative_files);
     } else if cli.json {
-        // ‼️ --json mode: Uses all_files
-        let mut relative_files: Vec<PathBuf> = all_files // ‼️ Changed from 'files'
-            .iter()
-            .filter_map(|abs_path| abs_path.strip_prefix(&root).ok())
-            .map(|rel_path| rel_path.to_path_buf())
-            .collect();
-        relative_files.sort();
-
+        // ‼️ --json mode: Just print the JSON tree
         let tree = build_fs_tree(&relative_files);
         match serde_json::to_string_pretty(&tree) {
             Ok(json) => println!("{}", json),
             Err(e) => eprintln!("Error serializing JSON: {}", e),
         }
     } else {
-        // ‼️ Default mode: Filter all_files to get content_files
+        // ‼️ NEW DEFAULT mode: JSON Tree + File Contents
+
+        // ‼️ 1. Build and print the JSON tree
+        let tree = build_fs_tree(&relative_files);
+        match serde_json::to_string_pretty(&tree) {
+            Ok(json) => println!("{}", json), // ‼️ Use println!
+            Err(e) => {
+                eprintln!("Error serializing JSON: {}", e);
+                // We can continue, to try and print file contents
+            }
+        }
+
+        // ‼️ 2. Get the content_files (this logic is unchanged)
         let content_files_result: Result<Vec<PathBuf>, GitRootError> = (|| {
             if cli.include.is_empty() {
                 // No --include.
@@ -350,8 +356,13 @@ fn main() {
             }
         })();
 
+        // ‼️ 3. Print the file contents
         match content_files_result {
             Ok(content_files) => {
+                if !content_files.is_empty() {
+                    // ‼️ Add a newline separator
+                    println!();
+                }
                 match get_file_contents(&content_files, &root) {
                     Ok(output) => print!("{}", output), // ‼️ print! not println!
                     Err(e) => eprintln!("Error processing file contents: {}", e),
