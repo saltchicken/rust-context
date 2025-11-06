@@ -1,14 +1,13 @@
-use clap::{ArgGroup, Parser}; // ‼️ ArgGroup added
+use clap::Parser;
 use git2::Repository;
 use glob::Pattern;
-use serde::Serialize; // ‼️ Added this
-use std::collections::{BTreeMap, HashSet}; // ‼️ BTreeMap added
-use std::fs; // ‼️ Added for file reading
+use serde::Serialize;
+use std::collections::{BTreeMap, HashSet};
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
-// ‼️ Struct for JSON serialization
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FsNode {
@@ -19,10 +18,8 @@ struct FsNode {
     children: Vec<FsNode>,
 }
 
-// ‼️ Cli struct is significantly updated
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None, group(
-    // ‼️ Added a mutually exclusive group for output modes
     clap::ArgGroup::new("output_mode")
         .required(false)
         .args(&["tree", "json"]),
@@ -36,12 +33,10 @@ struct Cli {
     #[arg(long, short = 'e', num_args(1..))]
     exclude: Vec<String>,
 
-    // ‼️ Added new argument
     /// Glob patterns to include in tree/json output only
     #[arg(long, num_args(1..))]
     include_in_tree: Vec<String>,
 
-    // ‼️ Replaced `format` with two boolean flags
     /// Display the file list as a human-readable tree
     #[arg(long)]
     tree: bool,
@@ -64,7 +59,6 @@ enum GitRootError {
     #[error("Failed to serialize JSON: {0}")]
     Json(#[from] serde_json::Error),
 
-    // ‼️ Added new error variants for file reading
     #[error("Failed to read file {0}: {1}")]
     FileRead(PathBuf, #[source] std::io::Error),
     #[error("File content for {0} is not valid UTF-8")]
@@ -144,7 +138,6 @@ fn list_non_ignored_files(
     Ok(non_ignored_files)
 }
 
-// ‼️ New function for the default behavior: wrapping file contents in XML
 fn get_file_contents(
     files: &[PathBuf], // Expecting absolute paths from list_non_ignored_files
     root: &Path,
@@ -177,7 +170,6 @@ fn get_file_contents(
     Ok(final_output)
 }
 
-// ‼️ Function to build the JSON-friendly tree
 fn build_fs_tree(relative_files: &[PathBuf]) -> Vec<FsNode> {
     // Helper function to recursively build the tree
     fn insert_path(current_level: &mut BTreeMap<String, FsNode>, path_components: &[Component]) {
@@ -227,7 +219,6 @@ fn build_fs_tree(relative_files: &[PathBuf]) -> Vec<FsNode> {
     root.into_values().collect()
 }
 
-// ‼️ Function for printing the human-readable tree
 fn print_tree_style(relative_files: &[PathBuf]) {
     let mut printed_dirs = HashSet::new();
     for path in relative_files {
@@ -248,7 +239,6 @@ fn print_tree_style(relative_files: &[PathBuf]) {
     }
 }
 
-// ‼️ main() function is heavily updated to branch logic
 fn main() {
     let cli = Cli::parse();
 
@@ -260,10 +250,8 @@ fn main() {
         }
     };
 
-    // ‼️ Combine all include patterns for the file discovery
     let all_include_patterns = [cli.include.as_slice(), cli.include_in_tree.as_slice()].concat();
 
-    // ‼️ Get ONE list of all files matching any criteria
     let all_files = match list_non_ignored_files(&root, &all_include_patterns, &cli.exclude) {
         Ok(files) => files,
         Err(err) => {
@@ -272,9 +260,6 @@ fn main() {
         }
     };
 
-    // ‼️ --- Main Logic Branch ---
-
-    // ‼️ NEW: Create relative_files list ONCE, as all modes can use it.
     let mut relative_files: Vec<PathBuf> = all_files
         .iter()
         .filter_map(|abs_path| abs_path.strip_prefix(&root).ok())
@@ -283,49 +268,39 @@ fn main() {
     relative_files.sort();
 
     if cli.tree {
-        // ‼️ --tree mode: Just print the human-readable tree
-        println!("Git root found at: {}", root.display());
-        println!("\nFound {} matching files:", relative_files.len());
         print_tree_style(&relative_files);
     } else if cli.json {
-        // ‼️ --json mode: Just print the JSON tree
         let tree = build_fs_tree(&relative_files);
         match serde_json::to_string_pretty(&tree) {
             Ok(json) => println!("{}", json),
             Err(e) => eprintln!("Error serializing JSON: {}", e),
         }
     } else {
-        // ‼️ NEW DEFAULT mode: JSON Tree + File Contents
-
-        // ‼️ 1. Build and print the JSON tree
         let tree = build_fs_tree(&relative_files);
         match serde_json::to_string_pretty(&tree) {
-            Ok(json) => println!("{}", json), // ‼️ Use println!
+            Ok(json) => {
+                println!("<directory-structure>");
+                println!("{}", json);
+                println!("</directory-structure>");
+            }
             Err(e) => {
                 eprintln!("Error serializing JSON: {}", e);
                 // We can continue, to try and print file contents
             }
         }
 
-        // ‼️ 2. Get the content_files (this logic is unchanged)
         let content_files_result: Result<Vec<PathBuf>, GitRootError> = (|| {
             if cli.include.is_empty() {
-                // No --include.
                 if cli.include_in_tree.is_empty() {
-                    // ‼️ Both flags empty. Default: include all files.
                     Ok(all_files)
                 } else {
-                    // ‼️ Only --include-in-tree was given. Default: include no files.
                     Ok(Vec::new())
                 }
             } else {
-                // ‼️ --include has patterns. We must filter all_files:
-                // ‼️ Keep files that match --include AND DO NOT match --include-in-tree.
                 let include_patterns: Result<Vec<Pattern>, _> =
                     cli.include.iter().map(|s| Pattern::new(s)).collect();
                 let include_patterns = include_patterns.map_err(GitRootError::InvalidGlob)?;
 
-                // ‼️ Compile --include-in-tree patterns to check for superseding
                 let tree_only_patterns: Result<Vec<Pattern>, _> = cli
                     .include_in_tree
                     .iter()
@@ -339,10 +314,8 @@ fn main() {
                         if let Ok(rel_path) = abs_path.strip_prefix(&root) {
                             let rel_str = rel_path.to_string_lossy().replace('\\', "/");
 
-                            // ‼️ Must match --include
                             let matches_include =
                                 include_patterns.iter().any(|p| p.matches(&rel_str));
-                            // ‼️ Must NOT match --include-in-tree (which supersedes it)
                             let matches_tree_only =
                                 tree_only_patterns.iter().any(|p| p.matches(&rel_str));
 
@@ -356,11 +329,9 @@ fn main() {
             }
         })();
 
-        // ‼️ 3. Print the file contents
         match content_files_result {
             Ok(content_files) => {
                 if !content_files.is_empty() {
-                    // ‼️ Add a newline separator
                     println!();
                 }
                 match get_file_contents(&content_files, &root) {
