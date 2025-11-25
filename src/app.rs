@@ -29,9 +29,7 @@ pub fn run() -> Result<()> {
 
     // Validation (mirroring Python logic)
     if config.include.is_empty() && config.include_in_tree.is_empty() {
-        log::warn!("💡 Tip: No include patterns provided (via CLI or presets).");
-        // TODO: In a real app, you might exit here, or continue to show an empty tree.
-        // We will proceed but the result will likely be empty.
+        anyhow::bail!("No include patterns provided. Please use --include (e.g., 'src/**/*.rs') or specify a preset.");
     }
 
     // 4. Scan Directory
@@ -61,4 +59,3 @@ pub fn run() -> Result<()> {
 
     Ok(())
 }
-
