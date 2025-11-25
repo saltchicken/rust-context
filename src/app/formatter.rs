@@ -1,5 +1,4 @@
 use crate::app::models::FileEntry;
-use anyhow::Result;
 use std::fs;
 
 pub struct OutputGenerator;
@@ -18,7 +17,6 @@ impl OutputGenerator {
 
         output.trim_end().to_string()
     }
-
 
     pub fn generate_content(entries: &[FileEntry]) -> String {
         let mut blocks = Vec::new();
@@ -59,3 +57,4 @@ impl OutputGenerator {
         out
     }
 }
+

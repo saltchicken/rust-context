@@ -14,7 +14,6 @@ use self::config::resolve_config;
 use self::formatter::OutputGenerator;
 use self::scanner::Scanner;
 
-
 /// Initializes components and orchestrates data flow.
 pub fn run() -> Result<()> {
     // 1. Parse Args
@@ -31,7 +30,7 @@ pub fn run() -> Result<()> {
     // Validation (mirroring Python logic)
     if config.include.is_empty() && config.include_in_tree.is_empty() {
         log::warn!("💡 Tip: No include patterns provided (via CLI or presets).");
-        // In a real app, you might exit here, or continue to show an empty tree.
+        // TODO: In a real app, you might exit here, or continue to show an empty tree.
         // We will proceed but the result will likely be empty.
     }
 
@@ -62,3 +61,4 @@ pub fn run() -> Result<()> {
 
     Ok(())
 }
+

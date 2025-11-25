@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
 
 #[derive(Deserialize, Debug)]
 struct PresetsFile {
@@ -18,7 +17,6 @@ struct PresetConfig {
     exclude: Option<Vec<String>>,
     include_in_tree: Option<Vec<String>>,
 }
-
 
 fn load_presets_file() -> Result<HashMap<String, PresetConfig>> {
     let home = dirs::home_dir().context("Could not determine home directory")?;
@@ -38,7 +36,6 @@ fn load_presets_file() -> Result<HashMap<String, PresetConfig>> {
 
     Ok(parsed.presets)
 }
-
 
 fn merge_vecs(preset_vec: Option<Vec<String>>, cli_vec: Option<Vec<String>>) -> Vec<String> {
     let mut combined = preset_vec.unwrap_or_default();
@@ -70,3 +67,4 @@ pub fn resolve_config(cli: Cli, project_name: Option<&str>) -> Result<RuntimeCon
 
     Ok(config)
 }
+
