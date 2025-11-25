@@ -48,16 +48,12 @@ impl Scanner {
         entries
     }
 
-    /// ‼️ REFACTOR: Complex filtering logic extracted to helper method
     fn process_entry(&self, path: &Path) -> Option<FileEntry> {
         // Skip the root folder itself from the list
         if path == self.root {
             return None;
         }
 
-        // ‼️ CHANGE: Explicitly exclude .git folder.
-        // Since we set .hidden(false) on the walker to allow things like .env or .github,
-        // we must manually ensure the .git directory itself is not traversed.
         if path.components().any(|c| c.as_os_str() == ".git") {
             return None;
         }
@@ -97,7 +93,6 @@ impl Scanner {
     }
 }
 
-/// ‼️ REFACTOR: Helper to build efficient glob sets
 fn build_globset(patterns: &[String]) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for pat in patterns {
