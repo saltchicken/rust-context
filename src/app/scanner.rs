@@ -22,7 +22,7 @@ impl Scanner {
         })
     }
 
-    /// ‼️ REFACTOR: Main scan logic extracted to methods, uses 'ignore' crate for native gitignore support
+
     pub fn scan(&self) -> Vec<FileEntry> {
         let mut entries = Vec::new();
 

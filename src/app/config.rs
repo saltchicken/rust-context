@@ -19,7 +19,7 @@ struct PresetConfig {
     include_in_tree: Option<Vec<String>>,
 }
 
-/// ‼️ REFACTOR: Extracted preset loading to its own helper function
+
 fn load_presets_file() -> Result<HashMap<String, PresetConfig>> {
     let home = dirs::home_dir().context("Could not determine home directory")?;
     let config_path = home
@@ -39,7 +39,7 @@ fn load_presets_file() -> Result<HashMap<String, PresetConfig>> {
     Ok(parsed.presets)
 }
 
-/// ‼️ REFACTOR: Extracted merging logic to keep the resolve function clean
+
 fn merge_vecs(preset_vec: Option<Vec<String>>, cli_vec: Option<Vec<String>>) -> Vec<String> {
     let mut combined = preset_vec.unwrap_or_default();
     if let Some(mut cli_items) = cli_vec {

@@ -19,7 +19,7 @@ impl OutputGenerator {
         output.trim_end().to_string()
     }
 
-    /// ‼️ REFACTOR: File reading logic wrapped in Result handling
+
     pub fn generate_content(entries: &[FileEntry]) -> String {
         let mut blocks = Vec::new();
 

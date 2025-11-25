@@ -14,7 +14,7 @@ use self::config::resolve_config;
 use self::formatter::OutputGenerator;
 use self::scanner::Scanner;
 
-/// ‼️ REFACTOR: Centralized application logic (Facade Pattern)
+
 /// Initializes components and orchestrates data flow.
 pub fn run() -> Result<()> {
     // 1. Parse Args
